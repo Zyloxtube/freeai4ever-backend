@@ -67,6 +67,13 @@ GPT_SIZE_TO_ASPECT = {
     "720x1280": "9:16",
 }
 
+# Quality mapping for Vidofy
+QUALITY_MAPPING = {
+    "1k": "1K",
+    "2k": "2K", 
+    "4k": "4K"
+}
+
 # ─── Temp email ──────────────────────────────────────────────────────────────
 class TempEmail:
     def __init__(self):
@@ -394,7 +401,7 @@ def run_synthesia_generation(prompt: str, size: str, model: str) -> dict:
         "download_url": result.get("downloadUrl", ""),
     }
 
-# ─── GPT Image 2 Alt via Playwright (VisualGPT) ──────────────────────────────────────────
+# ─── GPT Image 2 via Playwright (VisualGPT) ──────────────────────────────────────────
 async def _run_gptimage2_async(prompt: str, aspect_ratio: str, ref_image_infos: list = None) -> dict:
     browser = None
     pw = None
@@ -599,7 +606,7 @@ def run_gptimage2_generation(prompt: str, aspect_ratio: str, ref_image_infos: li
     finally:
         loop.close()
 
-# ─── Nano Banana 2 (Vidofy) ───────────────────────────────────────────────────
+# ─── Nano Banana 2 & Pro Alt (Vidofy) ───────────────────────────────────────────────────
 NB2_API_BASE = "https://vidofy.ai"
 NB2_WS_URL = "wss://vidofy.ai:2096/"
 NB2_NOVITA_REHOST = "https://3000-i367mb7olbgfer4t20p2p-2e77fc33.sandbox.novita.ai/api/upload"
@@ -880,25 +887,50 @@ def _nb2_create_account():
 
     raise RuntimeError(f"Vidofy account creation failed after 5 attempts: {last_err}")
 
-def _nb2_submit(session, prompt, ratio, image_input=None):
+def _nb2_submit(session, prompt, ratio, image_input=None, model="nanobanana_2", quality="1K"):
     is_i2i = image_input is not None
-    model_key = "Nano_banana_2_i2i" if is_i2i else "Nano_banana_2_t2i"
-    slug = "nano-banana-2-i2i" if is_i2i else "nano-banana-2-t2i"
-    mode = "image-to-image" if is_i2i else "text-to-image"
+    
+    # Model-specific configurations
+    if model == "nanobanana_pro_alt":
+        model_key = "Nano_banana_pro_i2i" if is_i2i else "Nano_banana_pro_t2i"
+        slug = "nano-banana-pro-i2i" if is_i2i else "nano-banana-pro-t2i"
+        mode = "image-to-image" if is_i2i else "text-to-image"
+        model_name = "Nano Banana Pro"
+    else:  # nanobanana_2
+        model_key = "Nano_banana_2_i2i" if is_i2i else "Nano_banana_2_t2i"
+        slug = "nano-banana-2-i2i" if is_i2i else "nano-banana-2-t2i"
+        mode = "image-to-image" if is_i2i else "text-to-image"
+        model_name = "Nano Banana 2"
+    
     referer = f"{NB2_API_BASE}/en/studio/{'image-to-image' if is_i2i else 'text-to-image'}"
-
+    
+    # Quality setting (1K, 2K, 4K)
+    quality_value = QUALITY_MAPPING.get(quality.lower(), "1K") if quality else "1K"
+    
     data_fields = [
-        ("m_prompt", prompt), ("m_aspect_ratio", ratio), ("m_aspect_ratio_price", ratio),
-        ("m_resolution_quality", "1K"), ("m_public", "on"), ("m_protection", "on"),
-        ("m_model_key", model_key), ("m_effect_key", ""), ("m_prefix", "google"),
-        ("m_api_cheap", "poyo_ai"), ("m_name", "Nano Banana 2"), ("m_slug", slug),
-        ("refresh", "data"), ("m_media_type", "image"), ("m_input_duration", "2"),
+        ("m_prompt", prompt), 
+        ("m_aspect_ratio", ratio), 
+        ("m_aspect_ratio_price", ratio),
+        ("m_resolution_quality", quality_value),
+        ("m_output_format", "jpg"),
+        ("m_public", "on"), 
+        ("m_protection", "on"),
+        ("m_model_key", model_key), 
+        ("m_effect_key", ""), 
+        ("m_prefix", "google"),
+        ("m_api_cheap", "poyo_ai"), 
+        ("m_name", model_name), 
+        ("m_slug", slug),
+        ("refresh", "data"), 
+        ("m_media_type", "image"), 
+        ("m_input_duration", "2"),
         ("m_mode", mode),
         ("page_url_ai_media", f"{NB2_API_BASE}/api/v1/generate/submit"),
         ("page_url_model_data", f"{NB2_API_BASE}/api/v1/info/model-info"),
         ("page_url_model_credits", f"{NB2_API_BASE}/api/v1/info/model-credits"),
         ("page_url_model_versions", f"{NB2_API_BASE}/api/v1/info/model-versions"),
-        ("secret_key", session["gen_key"]), ("regen_source_map", ""),
+        ("secret_key", session["gen_key"]), 
+        ("regen_source_map", ""),
     ]
 
     if is_i2i:
@@ -1073,7 +1105,7 @@ def _nb2_rehost(image_url):
         pass
     return image_url
 
-def run_nanobanana2_generation(prompt: str, size: str, image_input=None) -> dict:
+def run_nanobanana2_generation(prompt: str, size: str, image_input=None, quality="1K") -> dict:
     ratio = NB2_SIZE_TO_RATIO.get(size, "1:1")
 
     account = _nb2_pool_pop()
@@ -1081,7 +1113,27 @@ def run_nanobanana2_generation(prompt: str, size: str, image_input=None) -> dict
         print("[nb2] Pool empty — creating account directly (this may take a moment)…")
         account = _nb2_create_account()
 
-    media_id, ws_token = _nb2_submit(account, prompt, ratio, image_input)
+    media_id, ws_token = _nb2_submit(account, prompt, ratio, image_input, "nanobanana_2", quality)
+
+    image_url = None
+    try:
+        image_url = _nb2_ws_poll(media_id, ws_token, timeout=300)
+    except Exception as _ws_err:
+        print(f"[nb2] WebSocket failed ({_ws_err}), switching to HTTP polling…")
+        image_url = _nb2_http_poll(account, media_id, timeout=300)
+
+    final_url = _nb2_rehost(image_url)
+    return {"url": final_url, "download_url": final_url}
+
+def run_nanobanana_pro_alt_generation(prompt: str, size: str, image_input=None, quality="1K") -> dict:
+    ratio = NB2_SIZE_TO_RATIO.get(size, "1:1")
+
+    account = _nb2_pool_pop()
+    if account is None:
+        print("[nb2] Pool empty — creating account directly (this may take a moment)…")
+        account = _nb2_create_account()
+
+    media_id, ws_token = _nb2_submit(account, prompt, ratio, image_input, "nanobanana_pro_alt", quality)
 
     image_url = None
     try:
@@ -1104,7 +1156,10 @@ def run_generation(prompt: str, size: str, model: str, ref_images: list = None, 
         return run_gptimage2_generation(prompt, aspect_ratio, ref_images)
     if model == "nanobanana_2":
         image_input = ref_images[0] if ref_images else None
-        return run_nanobanana2_generation(prompt, size, image_input)
+        return run_nanobanana2_generation(prompt, size, image_input, quality)
+    if model == "nanobanana_pro_alt":
+        image_input = ref_images[0] if ref_images else None
+        return run_nanobanana_pro_alt_generation(prompt, size, image_input, quality)
     return run_synthesia_generation(prompt, size, model)
 
 # ============ API JOB STORAGE ============
@@ -1118,10 +1173,10 @@ class JobStatus(str, Enum):
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=2000)
-    model: str = Field(..., description="nanobanana_pro, nanobanana_2, gpt_image_2, gpt_image_2_alt, fal_veo3, fal_veo3_fast")
+    model: str = Field(..., description="nanobanana_pro, nanobanana_pro_alt, nanobanana_2, gpt_image_2, gpt_image_2_alt, fal_veo3, fal_veo3_fast")
     ref_image: Optional[str] = None
     size: Optional[str] = "1280x720"
-    quality: Optional[str] = None
+    quality: Optional[str] = "1k"
     thinking: Optional[str] = None
 
 class GenerateResponse(BaseModel):
@@ -1170,7 +1225,7 @@ def process_ref_image(ref_image: str, model: str):
         if ref_image.startswith(('http://', 'https://')):
             return [(ref_image, "ref.jpg", "image/jpeg")]
         return None
-    elif model == "nanobanana_2":
+    elif model == "nanobanana_2" or model == "nanobanana_pro_alt":
         if ref_image.startswith(('http://', 'https://')):
             resp = requests.get(ref_image, timeout=30)
             resp.raise_for_status()
@@ -1203,7 +1258,7 @@ async def run_generation_background(job_id: str, request: GenerateRequest):
             update_job(job_id, JobStatus.PROCESSING, 10, "Loading reference image...")
             ref_images = process_ref_image(request.ref_image, request.model)
         
-        update_job(job_id, JobStatus.PROCESSING, 20, f"Running {request.model}...")
+        update_job(job_id, JobStatus.PROCESSING, 20, f"Running {request.model} with quality {request.quality}...")
         
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
@@ -1225,13 +1280,17 @@ async def run_generation_background(job_id: str, request: GenerateRequest):
 
 @app.post("/generate", response_model=GenerateResponse)
 async def generate(request: GenerateRequest, background_tasks: BackgroundTasks):
-    valid_models = ["nanobanana_pro", "nanobanana_2", "gpt_image_2", "gpt_image_2_alt", "fal_veo3", "fal_veo3_fast"]
+    valid_models = ["nanobanana_pro", "nanobanana_pro_alt", "nanobanana_2", "gpt_image_2", "gpt_image_2_alt", "fal_veo3", "fal_veo3_fast"]
     if request.model not in valid_models:
         raise HTTPException(400, f"Invalid model. Use: {valid_models}")
     
     valid_sizes = ["1080x1080", "1280x720", "720x1280"]
     if request.size not in valid_sizes:
         raise HTTPException(400, f"Invalid size. Use: {valid_sizes}")
+    
+    valid_qualities = ["1k", "2k", "4k"]
+    if request.quality and request.quality.lower() not in valid_qualities:
+        raise HTTPException(400, f"Invalid quality. Use: {valid_qualities}")
     
     job_id = str(uuid.uuid4())
     
@@ -1254,7 +1313,7 @@ async def generate(request: GenerateRequest, background_tasks: BackgroundTasks):
     return GenerateResponse(
         status_id=job_id,
         status="pending",
-        message="Job submitted successfully (GPT Image 2 uses VisualGPT)"
+        message="Job submitted successfully"
     )
 
 @app.get("/status/{job_id}", response_model=StatusResponse)
@@ -1286,7 +1345,8 @@ async def list_models():
     return {
         "models": [
             {"id": "nanobanana_pro", "name": "Nano Banana Pro", "type": "image", "generator": "Synthesia"},
-            {"id": "nanobanana_2", "name": "Nano Banana 2", "type": "image", "generator": "Vidofy", "supports_ref": True},
+            {"id": "nanobanana_pro_alt", "name": "Nano Banana Pro Alt", "type": "image", "generator": "Vidofy", "supports_ref": True, "supports_quality": True},
+            {"id": "nanobanana_2", "name": "Nano Banana 2", "type": "image", "generator": "Vidofy", "supports_ref": True, "supports_quality": True},
             {"id": "gpt_image_2", "name": "GPT Image 2", "type": "image", "generator": "VisualGPT", "supports_ref": True},
             {"id": "gpt_image_2_alt", "name": "GPT Image 2 Alt", "type": "image", "generator": "VisualGPT", "supports_ref": True},
             {"id": "fal_veo3", "name": "Veo 3.1", "type": "video", "generator": "Synthesia"},
