@@ -9,8 +9,3 @@ pycryptodome
 websocket-client
 aiohttp
 python-multipart
-discord.py
-flask
-bs4
-urllib3
-cryptography
