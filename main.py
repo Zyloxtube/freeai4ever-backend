@@ -1,5 +1,21 @@
-# main.py - Complete API with CORS enabled
+# ============ FORCE PLAYWRIGHT BROWSER INSTALLATION ============
+import subprocess
+import sys
 import os
+
+# Set Playwright cache directory
+os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '/opt/render/.cache/ms-playwright'
+
+# Install browsers if not present
+try:
+    print("🔧 Checking/installing Playwright browsers...")
+    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], 
+                   capture_output=False, check=True)
+    print("✅ Playwright chromium installed")
+except Exception as e:
+    print(f"⚠️ Playwright install warning: {e}")
+
+# ============ REGULAR IMPORTS ============
 import re
 import io
 import time
@@ -929,15 +945,17 @@ def _nb2_extract_image_url(html):
     fb = re.search(r'https://cdn\.vidofy\.ai/[^\s"\']+\.(?:jpe?g|png|webp)', html, re.IGNORECASE)
     return fb.group(0) if fb else None
 
-def _nb2_ws_poll(media_id, ws_token, timeout=40):
+def _nb2_ws_poll(media_id, ws_token, timeout=300):
     result = {"url": None, "error": None, "done": False}
 
     def on_open(ws):
+        print(f"[nb2] WebSocket opened for media_id: {media_id}")
         ws.send(_json.dumps({"action": "subscribe", "job_id": media_id, "token": ws_token}))
 
     def on_message(ws, raw):
         try:
             msg = _json.loads(raw)
+            print(f"[nb2] WebSocket message: {msg.get('event', msg.get('status', 'unknown'))}")
             if msg.get("type") == "ping":
                 ws.send(_json.dumps({"type": "pong"}))
                 return
@@ -953,14 +971,16 @@ def _nb2_ws_poll(media_id, ws_token, timeout=40):
                 result["error"] = "Generation error from Vidofy"
                 result["done"] = True
                 ws.close()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[nb2] WebSocket message error: {e}")
 
     def on_error(ws, err):
+        print(f"[nb2] WebSocket error: {err}")
         result["error"] = str(err)
         result["done"] = True
 
     def on_close(ws, code, msg):
+        print(f"[nb2] WebSocket closed: {code} - {msg}")
         result["done"] = True
 
     ws = _websocket.WebSocketApp(
@@ -975,11 +995,12 @@ def _nb2_ws_poll(media_id, ws_token, timeout=40):
     while time.time() < deadline:
         if result["done"]:
             break
-        time.sleep(0.5)
+        time.sleep(2)
 
     if not result["done"]:
         ws.close()
-        raise TimeoutError("WebSocket did not respond in time")
+        print(f"[nb2] WebSocket timeout after {timeout}s")
+        raise TimeoutError(f"WebSocket did not respond in time after {timeout}s")
     if result["error"]:
         raise RuntimeError(result["error"])
     return result["url"]
@@ -1064,7 +1085,7 @@ def run_nanobanana2_generation(prompt: str, size: str, image_input=None) -> dict
 
     image_url = None
     try:
-        image_url = _nb2_ws_poll(media_id, ws_token, timeout=180)
+        image_url = _nb2_ws_poll(media_id, ws_token, timeout=300)
     except Exception as _ws_err:
         print(f"[nb2] WebSocket failed ({_ws_err}), switching to HTTP polling…")
         image_url = _nb2_http_poll(account, media_id, timeout=300)
