@@ -1,4 +1,4 @@
-# api.py - Complete API with your actual generation functions
+# main.py - Complete API with CORS enabled
 import os
 import re
 import io
@@ -18,6 +18,7 @@ from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_v1_5
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from enum import Enum
@@ -1119,16 +1120,26 @@ class StatusResponse(BaseModel):
     result: Optional[Dict] = None
     error: Optional[str] = None
 
-# ============ FASTAPI APP ============
+# ============ FASTAPI APP WITH CORS ============
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     replenish_thread = threading.Thread(target=_nb2_pool_replenish_loop, daemon=True)
     replenish_thread.start()
     print("✅ API Started - GPT Image 2 uses VisualGPT only")
+    print("🌐 CORS enabled - All origins allowed")
     yield
     print("🛑 API Shutting down")
 
 app = FastAPI(title="AI Media Generation API", lifespan=lifespan)
+
+# ============ CORS MIDDLEWARE - Allow any website to call this API ============
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def process_ref_image(ref_image: str, model: str):
     if not ref_image:
