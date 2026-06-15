@@ -895,13 +895,15 @@ def _nb2_submit(session, prompt, ratio, image_input=None, model_type="nanobanana
         model_name = "Nano Banana 2"
         output_format = "jpg"
     
-    # Validate quality (default to 1K if invalid)
-    valid_qualities = ["1K", "2K", "4K"]
-    if quality not in valid_qualities:
+    # Quality must be exactly "1K", "2K", or "4K" (case sensitive)
+    if quality not in ["1K", "2K", "4K"]:
+        print(f"[nb2] Invalid quality '{quality}', defaulting to 1K")
         quality = "1K"
     
     mode = "image-to-image" if is_i2i else "text-to-image"
     referer = f"{NB2_API_BASE}/en/studio/{'image-to-image' if is_i2i else 'text-to-image'}"
+
+    print(f"[nb2] Submitting with quality: {quality}")
 
     data_fields = [
         ("m_prompt", prompt),
@@ -948,23 +950,27 @@ def _nb2_submit(session, prompt, ratio, image_input=None, model_type="nanobanana
             ("m_last_frame", ("", b"", "application/octet-stream")),
         ]
 
-    res = requests.post(
-        f"{NB2_API_BASE}/api/v1/generate/submit",
-        headers=_nb2_headers({
-            "accept": "application/json, text/javascript, */*; q=0.01",
-            "origin": NB2_API_BASE, "referer": referer,
-            "cookie": f"vidofy_session_token={session['session_token']}",
-            "x-requested-with": "XMLHttpRequest",
-            "sec-fetch-dest": "empty", "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin",
-        }),
-        files=files,
-        data=data_fields,
-        timeout=60,
-    )
-    data = res.json()
-    if data.get("status") != "success":
-        raise RuntimeError(f"Vidofy submit failed: {data}")
-    return data["media_id"], data["ws_token"]
+    try:
+        res = requests.post(
+            f"{NB2_API_BASE}/api/v1/generate/submit",
+            headers=_nb2_headers({
+                "accept": "application/json, text/javascript, */*; q=0.01",
+                "origin": NB2_API_BASE, "referer": referer,
+                "cookie": f"vidofy_session_token={session['session_token']}",
+                "x-requested-with": "XMLHttpRequest",
+                "sec-fetch-dest": "empty", "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin",
+            }),
+            files=files,
+            data=data_fields,
+            timeout=60,
+        )
+        data = res.json()
+        if data.get("status") != "success":
+            raise RuntimeError(f"Vidofy submit failed: {data}")
+        return data["media_id"], data["ws_token"]
+    except Exception as e:
+        print(f"[nb2] Submit error: {e}")
+        raise
 
 def _nb2_extract_image_url(html):
     m = re.search(r'data-src="(https://cdn\.vidofy\.ai/[^"]+\.(?:jpe?g|png|webp))"', html, re.IGNORECASE)
@@ -1103,6 +1109,8 @@ def _nb2_rehost(image_url):
 
 def run_nanobanana_pro_alt_generation(prompt: str, size: str, image_input=None, quality: str = "1K") -> dict:
     ratio = NB2_SIZE_TO_RATIO.get(size, "1:1")
+    
+    print(f"[nb2] Running Nano Banana Pro Alt with quality: {quality}")
 
     account = _nb2_pool_pop()
     if account is None:
@@ -1119,10 +1127,12 @@ def run_nanobanana_pro_alt_generation(prompt: str, size: str, image_input=None, 
         image_url = _nb2_http_poll(account, media_id, timeout=300)
 
     final_url = _nb2_rehost(image_url)
-    return {"url": final_url, "download_url": final_url}
+    return {"url": final_url, "download_url": final_url, "quality": quality}
 
 def run_nanobanana2_generation(prompt: str, size: str, image_input=None, quality: str = "1K") -> dict:
     ratio = NB2_SIZE_TO_RATIO.get(size, "1:1")
+    
+    print(f"[nb2] Running Nano Banana 2 with quality: {quality}")
 
     account = _nb2_pool_pop()
     if account is None:
@@ -1139,7 +1149,7 @@ def run_nanobanana2_generation(prompt: str, size: str, image_input=None, quality
         image_url = _nb2_http_poll(account, media_id, timeout=300)
 
     final_url = _nb2_rehost(image_url)
-    return {"url": final_url, "download_url": final_url}
+    return {"url": final_url, "download_url": final_url, "quality": quality}
 
 # ─── Dispatch ─────────────────────────────────────────────────────────────────
 def run_generation(prompt: str, size: str, model: str, ref_images: list = None, quality: str = None, thinking: str = None) -> dict:
@@ -1153,10 +1163,12 @@ def run_generation(prompt: str, size: str, model: str, ref_images: list = None, 
     if model == "nanobanana_2":
         image_input = ref_images[0] if ref_images else None
         quality_value = quality if quality in ["1K", "2K", "4K"] else "1K"
+        print(f"[dispatch] Nano Banana 2 with quality: {quality_value}")
         return run_nanobanana2_generation(prompt, size, image_input, quality_value)
     if model == "nanobanana_pro_alt":
         image_input = ref_images[0] if ref_images else None
         quality_value = quality if quality in ["1K", "2K", "4K"] else "1K"
+        print(f"[dispatch] Nano Banana Pro Alt with quality: {quality_value}")
         return run_nanobanana_pro_alt_generation(prompt, size, image_input, quality_value)
     return run_synthesia_generation(prompt, size, model)
 
@@ -1207,7 +1219,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AI Media Generation API", lifespan=lifespan)
 
-# ============ CORS MIDDLEWARE - Allow any website to call this API ============
+# ============ CORS MIDDLEWARE ============
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1216,7 +1228,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ============ ROOT ENDPOINT FOR RENDER HEALTH CHECK ============
+# ============ ROOT ENDPOINT ============
 @app.get("/")
 async def root():
     return {
@@ -1224,12 +1236,7 @@ async def root():
         "message": "AI Media Generation API is live",
         "version": "2.0.0",
         "quality_support": "1K, 2K, 4K for Vidofy models",
-        "endpoints": [
-            "POST /generate",
-            "GET /status/{job_id}",
-            "GET /health",
-            "GET /models"
-        ]
+        "endpoints": ["POST /generate", "GET /status/{job_id}", "GET /health", "GET /models"]
     }
 
 def process_ref_image(ref_image: str, model: str):
@@ -1273,7 +1280,8 @@ async def run_generation_background(job_id: str, request: GenerateRequest):
             update_job(job_id, JobStatus.PROCESSING, 10, "Loading reference image...")
             ref_images = process_ref_image(request.ref_image, request.model)
         
-        update_job(job_id, JobStatus.PROCESSING, 20, f"Running {request.model} with quality {request.quality or '1K'}...")
+        quality_info = f" with quality {request.quality}" if request.quality else ""
+        update_job(job_id, JobStatus.PROCESSING, 20, f"Running {request.model}{quality_info}...")
         
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
@@ -1360,7 +1368,7 @@ async def health():
 async def list_models():
     return {
         "models": [
-            {"id": "nanobanana_pro", "name": "Nano Banana Pro", "type": "image", "generator": "Synthesia", "quality_support": None},
+            {"id": "nanobanana_pro", "name": "Nano Banana Pro", "type": "image", "generator": "Synthesia"},
             {"id": "nanobanana_pro_alt", "name": "Nano Banana Pro Alt", "type": "image", "generator": "Vidofy", "supports_ref": True, "quality_support": ["1K", "2K", "4K"]},
             {"id": "nanobanana_2", "name": "Nano Banana 2", "type": "image", "generator": "Vidofy", "supports_ref": True, "quality_support": ["1K", "2K", "4K"]},
             {"id": "gpt_image_2", "name": "GPT Image 2", "type": "image", "generator": "VisualGPT", "supports_ref": True},
