@@ -599,7 +599,7 @@ def run_gptimage2_generation(prompt: str, aspect_ratio: str, ref_image_infos: li
     finally:
         loop.close()
 
-# ─── Nano Banana Pro Alt & Nano Banana 2 (Vidofy) ───────────────────────────────────────────────────
+# ─── Nano Banana, Nano Banana Pro Alt & Nano Banana 2 (Vidofy) ───────────────────────────────────────────────────
 NB2_API_BASE = "https://vidofy.ai"
 NB2_WS_URL = "wss://vidofy.ai:2096/"
 NB2_NOVITA_REHOST = "https://3000-i367mb7olbgfer4t20p2p-2e77fc33.sandbox.novita.ai/api/upload"
@@ -880,43 +880,54 @@ def _nb2_create_account():
 
     raise RuntimeError(f"Vidofy account creation failed after 5 attempts: {last_err}")
 
-def _nb2_submit(session, prompt, ratio, image_input=None, model_type="nanobanana_2", quality="1K"):
+def _nb2_submit(session, prompt, ratio, image_input=None, model_type="nanobanana_2"):
     is_i2i = image_input is not None
     
-    # Set model-specific parameters
+    # Set model-specific parameters based on the model type
     if model_type == "nanobanana_pro_alt":
         model_key = "Nano_banana_pro_i2i" if is_i2i else "Nano_banana_pro_t2i"
         slug = "nano-banana-pro-i2i" if is_i2i else "nano-banana-pro-t2i"
         model_name = "Nano Banana Pro"
         output_format = "jpg"
-    else:  # nanobanana_2
+        api_cheap = "poyo_ai"
+        has_resolution_quality = True
+    elif model_type == "nanobanana_2":
         model_key = "Nano_banana_2_i2i" if is_i2i else "Nano_banana_2_t2i"
         slug = "nano-banana-2-i2i" if is_i2i else "nano-banana-2-t2i"
         model_name = "Nano Banana 2"
         output_format = "jpg"
-    
-    # Quality must be exactly "1K", "2K", or "4K" (case sensitive)
-    if quality not in ["1K", "2K", "4K"]:
-        print(f"[nb2] Invalid quality '{quality}', defaulting to 1K")
-        quality = "1K"
+        api_cheap = "poyo_ai"
+        has_resolution_quality = True
+    elif model_type == "nanobanana":
+        model_key = "Nano_banana_i2i" if is_i2i else "Nano_banana_t2i"
+        slug = "nano-banana-i2i" if is_i2i else "nano-banana-t2i"
+        model_name = "Nano Banana"
+        output_format = "jpeg"
+        api_cheap = "kie_ai"
+        has_resolution_quality = False
+    else:
+        # Default to nanobanana_2
+        model_key = "Nano_banana_2_i2i" if is_i2i else "Nano_banana_2_t2i"
+        slug = "nano-banana-2-i2i" if is_i2i else "nano-banana-2-t2i"
+        model_name = "Nano Banana 2"
+        output_format = "jpg"
+        api_cheap = "poyo_ai"
+        has_resolution_quality = True
     
     mode = "image-to-image" if is_i2i else "text-to-image"
     referer = f"{NB2_API_BASE}/en/studio/{'image-to-image' if is_i2i else 'text-to-image'}"
 
-    print(f"[nb2] Submitting with quality: {quality}")
-
+    # Build data fields
     data_fields = [
         ("m_prompt", prompt),
         ("m_aspect_ratio", ratio),
         ("m_aspect_ratio_price", ratio),
-        ("m_resolution_quality", quality),
         ("m_output_format", output_format),
         ("m_public", "on"),
-        ("m_protection", "on"),
         ("m_model_key", model_key),
         ("m_effect_key", ""),
         ("m_prefix", "google"),
-        ("m_api_cheap", "poyo_ai"),
+        ("m_api_cheap", api_cheap),
         ("m_name", model_name),
         ("m_slug", slug),
         ("refresh", "data"),
@@ -930,6 +941,10 @@ def _nb2_submit(session, prompt, ratio, image_input=None, model_type="nanobanana
         ("secret_key", session["gen_key"]),
         ("regen_source_map", ""),
     ]
+    
+    # Add resolution quality only for models that support it
+    if has_resolution_quality:
+        data_fields.insert(3, ("m_resolution_quality", "1K"))
 
     if is_i2i:
         img_bytes, img_filename, img_mime = image_input
@@ -950,27 +965,23 @@ def _nb2_submit(session, prompt, ratio, image_input=None, model_type="nanobanana
             ("m_last_frame", ("", b"", "application/octet-stream")),
         ]
 
-    try:
-        res = requests.post(
-            f"{NB2_API_BASE}/api/v1/generate/submit",
-            headers=_nb2_headers({
-                "accept": "application/json, text/javascript, */*; q=0.01",
-                "origin": NB2_API_BASE, "referer": referer,
-                "cookie": f"vidofy_session_token={session['session_token']}",
-                "x-requested-with": "XMLHttpRequest",
-                "sec-fetch-dest": "empty", "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin",
-            }),
-            files=files,
-            data=data_fields,
-            timeout=60,
-        )
-        data = res.json()
-        if data.get("status") != "success":
-            raise RuntimeError(f"Vidofy submit failed: {data}")
-        return data["media_id"], data["ws_token"]
-    except Exception as e:
-        print(f"[nb2] Submit error: {e}")
-        raise
+    res = requests.post(
+        f"{NB2_API_BASE}/api/v1/generate/submit",
+        headers=_nb2_headers({
+            "accept": "application/json, text/javascript, */*; q=0.01",
+            "origin": NB2_API_BASE, "referer": referer,
+            "cookie": f"vidofy_session_token={session['session_token']}",
+            "x-requested-with": "XMLHttpRequest",
+            "sec-fetch-dest": "empty", "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin",
+        }),
+        files=files,
+        data=data_fields,
+        timeout=60,
+    )
+    data = res.json()
+    if data.get("status") != "success":
+        raise RuntimeError(f"Vidofy submit failed: {data}")
+    return data["media_id"], data["ws_token"]
 
 def _nb2_extract_image_url(html):
     m = re.search(r'data-src="(https://cdn\.vidofy\.ai/[^"]+\.(?:jpe?g|png|webp))"', html, re.IGNORECASE)
@@ -1107,17 +1118,15 @@ def _nb2_rehost(image_url):
         pass
     return image_url
 
-def run_nanobanana_pro_alt_generation(prompt: str, size: str, image_input=None, quality: str = "1K") -> dict:
+def run_nanobanana_generation(prompt: str, size: str, image_input=None) -> dict:
     ratio = NB2_SIZE_TO_RATIO.get(size, "1:1")
-    
-    print(f"[nb2] Running Nano Banana Pro Alt with quality: {quality}")
 
     account = _nb2_pool_pop()
     if account is None:
         print("[nb2] Pool empty — creating account directly (this may take a moment)…")
         account = _nb2_create_account()
 
-    media_id, ws_token = _nb2_submit(account, prompt, ratio, image_input, model_type="nanobanana_pro_alt", quality=quality)
+    media_id, ws_token = _nb2_submit(account, prompt, ratio, image_input, model_type="nanobanana")
 
     image_url = None
     try:
@@ -1127,19 +1136,17 @@ def run_nanobanana_pro_alt_generation(prompt: str, size: str, image_input=None, 
         image_url = _nb2_http_poll(account, media_id, timeout=300)
 
     final_url = _nb2_rehost(image_url)
-    return {"url": final_url, "download_url": final_url, "quality": quality}
+    return {"url": final_url, "download_url": final_url}
 
-def run_nanobanana2_generation(prompt: str, size: str, image_input=None, quality: str = "1K") -> dict:
+def run_nanobanana_pro_alt_generation(prompt: str, size: str, image_input=None) -> dict:
     ratio = NB2_SIZE_TO_RATIO.get(size, "1:1")
-    
-    print(f"[nb2] Running Nano Banana 2 with quality: {quality}")
 
     account = _nb2_pool_pop()
     if account is None:
         print("[nb2] Pool empty — creating account directly (this may take a moment)…")
         account = _nb2_create_account()
 
-    media_id, ws_token = _nb2_submit(account, prompt, ratio, image_input, model_type="nanobanana_2", quality=quality)
+    media_id, ws_token = _nb2_submit(account, prompt, ratio, image_input, model_type="nanobanana_pro_alt")
 
     image_url = None
     try:
@@ -1149,7 +1156,27 @@ def run_nanobanana2_generation(prompt: str, size: str, image_input=None, quality
         image_url = _nb2_http_poll(account, media_id, timeout=300)
 
     final_url = _nb2_rehost(image_url)
-    return {"url": final_url, "download_url": final_url, "quality": quality}
+    return {"url": final_url, "download_url": final_url}
+
+def run_nanobanana2_generation(prompt: str, size: str, image_input=None) -> dict:
+    ratio = NB2_SIZE_TO_RATIO.get(size, "1:1")
+
+    account = _nb2_pool_pop()
+    if account is None:
+        print("[nb2] Pool empty — creating account directly (this may take a moment)…")
+        account = _nb2_create_account()
+
+    media_id, ws_token = _nb2_submit(account, prompt, ratio, image_input, model_type="nanobanana_2")
+
+    image_url = None
+    try:
+        image_url = _nb2_ws_poll(media_id, ws_token, timeout=300)
+    except Exception as _ws_err:
+        print(f"[nb2] WebSocket failed ({_ws_err}), switching to HTTP polling…")
+        image_url = _nb2_http_poll(account, media_id, timeout=300)
+
+    final_url = _nb2_rehost(image_url)
+    return {"url": final_url, "download_url": final_url}
 
 # ─── Dispatch ─────────────────────────────────────────────────────────────────
 def run_generation(prompt: str, size: str, model: str, ref_images: list = None, quality: str = None, thinking: str = None) -> dict:
@@ -1160,16 +1187,15 @@ def run_generation(prompt: str, size: str, model: str, ref_images: list = None, 
     if model == "gpt_image_2_alt":
         aspect_ratio = GPT_SIZE_TO_ASPECT.get(size, "1:1")
         return run_gptimage2_generation(prompt, aspect_ratio, ref_images)
+    if model == "nanobanana":
+        image_input = ref_images[0] if ref_images else None
+        return run_nanobanana_generation(prompt, size, image_input)
     if model == "nanobanana_2":
         image_input = ref_images[0] if ref_images else None
-        quality_value = quality if quality in ["1K", "2K", "4K"] else "1K"
-        print(f"[dispatch] Nano Banana 2 with quality: {quality_value}")
-        return run_nanobanana2_generation(prompt, size, image_input, quality_value)
+        return run_nanobanana2_generation(prompt, size, image_input)
     if model == "nanobanana_pro_alt":
         image_input = ref_images[0] if ref_images else None
-        quality_value = quality if quality in ["1K", "2K", "4K"] else "1K"
-        print(f"[dispatch] Nano Banana Pro Alt with quality: {quality_value}")
-        return run_nanobanana_pro_alt_generation(prompt, size, image_input, quality_value)
+        return run_nanobanana_pro_alt_generation(prompt, size, image_input)
     return run_synthesia_generation(prompt, size, model)
 
 # ============ API JOB STORAGE ============
@@ -1183,7 +1209,7 @@ class JobStatus(str, Enum):
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=2000)
-    model: str = Field(..., description="nanobanana_pro, nanobanana_pro_alt, nanobanana_2, gpt_image_2, gpt_image_2_alt, fal_veo3, fal_veo3_fast")
+    model: str = Field(..., description="nanobanana, nanobanana_pro, nanobanana_pro_alt, nanobanana_2, gpt_image_2, gpt_image_2_alt, fal_veo3, fal_veo3_fast")
     ref_image: Optional[str] = None
     size: Optional[str] = "1280x720"
     quality: Optional[str] = None
@@ -1212,14 +1238,14 @@ async def lifespan(app: FastAPI):
     replenish_thread = threading.Thread(target=_nb2_pool_replenish_loop, daemon=True)
     replenish_thread.start()
     print("✅ API Started - GPT Image 2 uses VisualGPT only")
-    print("✅ Nano Banana Pro Alt & Nano Banana 2 use Vidofy with 1K/2K/4K quality support")
+    print("✅ Nano Banana, Nano Banana Pro Alt & Nano Banana 2 use Vidofy")
     print("🌐 CORS enabled - All origins allowed")
     yield
     print("🛑 API Shutting down")
 
 app = FastAPI(title="AI Media Generation API", lifespan=lifespan)
 
-# ============ CORS MIDDLEWARE ============
+# ============ CORS MIDDLEWARE - Allow any website to call this API ============
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1228,15 +1254,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ============ ROOT ENDPOINT ============
+# ============ ROOT ENDPOINT FOR RENDER HEALTH CHECK ============
 @app.get("/")
 async def root():
     return {
         "status": "running",
         "message": "AI Media Generation API is live",
         "version": "2.0.0",
-        "quality_support": "1K, 2K, 4K for Vidofy models",
-        "endpoints": ["POST /generate", "GET /status/{job_id}", "GET /health", "GET /models"]
+        "endpoints": [
+            "POST /generate",
+            "GET /status/{job_id}",
+            "GET /health",
+            "GET /models"
+        ]
     }
 
 def process_ref_image(ref_image: str, model: str):
@@ -1247,7 +1277,7 @@ def process_ref_image(ref_image: str, model: str):
         if ref_image.startswith(('http://', 'https://')):
             return [(ref_image, "ref.jpg", "image/jpeg")]
         return None
-    elif model == "nanobanana_2" or model == "nanobanana_pro_alt":
+    elif model in ["nanobanana", "nanobanana_2", "nanobanana_pro_alt"]:
         if ref_image.startswith(('http://', 'https://')):
             resp = requests.get(ref_image, timeout=30)
             resp.raise_for_status()
@@ -1280,8 +1310,7 @@ async def run_generation_background(job_id: str, request: GenerateRequest):
             update_job(job_id, JobStatus.PROCESSING, 10, "Loading reference image...")
             ref_images = process_ref_image(request.ref_image, request.model)
         
-        quality_info = f" with quality {request.quality}" if request.quality else ""
-        update_job(job_id, JobStatus.PROCESSING, 20, f"Running {request.model}{quality_info}...")
+        update_job(job_id, JobStatus.PROCESSING, 20, f"Running {request.model}...")
         
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
@@ -1303,18 +1332,13 @@ async def run_generation_background(job_id: str, request: GenerateRequest):
 
 @app.post("/generate", response_model=GenerateResponse)
 async def generate(request: GenerateRequest, background_tasks: BackgroundTasks):
-    valid_models = ["nanobanana_pro", "nanobanana_pro_alt", "nanobanana_2", "gpt_image_2", "gpt_image_2_alt", "fal_veo3", "fal_veo3_fast"]
+    valid_models = ["nanobanana", "nanobanana_pro", "nanobanana_pro_alt", "nanobanana_2", "gpt_image_2", "gpt_image_2_alt", "fal_veo3", "fal_veo3_fast"]
     if request.model not in valid_models:
         raise HTTPException(400, f"Invalid model. Use: {valid_models}")
     
     valid_sizes = ["1080x1080", "1280x720", "720x1280"]
     if request.size not in valid_sizes:
         raise HTTPException(400, f"Invalid size. Use: {valid_sizes}")
-    
-    # Validate quality for Vidofy models
-    if request.model in ["nanobanana_2", "nanobanana_pro_alt"] and request.quality:
-        if request.quality not in ["1K", "2K", "4K"]:
-            raise HTTPException(400, "Invalid quality. Use: 1K, 2K, or 4K")
     
     job_id = str(uuid.uuid4())
     
@@ -1368,9 +1392,10 @@ async def health():
 async def list_models():
     return {
         "models": [
+            {"id": "nanobanana", "name": "Nano Banana", "type": "image", "generator": "Vidofy", "supports_ref": True, "api": "kie_ai", "format": "jpeg"},
             {"id": "nanobanana_pro", "name": "Nano Banana Pro", "type": "image", "generator": "Synthesia"},
-            {"id": "nanobanana_pro_alt", "name": "Nano Banana Pro Alt", "type": "image", "generator": "Vidofy", "supports_ref": True, "quality_support": ["1K", "2K", "4K"]},
-            {"id": "nanobanana_2", "name": "Nano Banana 2", "type": "image", "generator": "Vidofy", "supports_ref": True, "quality_support": ["1K", "2K", "4K"]},
+            {"id": "nanobanana_pro_alt", "name": "Nano Banana Pro Alt", "type": "image", "generator": "Vidofy", "supports_ref": True, "api": "poyo_ai"},
+            {"id": "nanobanana_2", "name": "Nano Banana 2", "type": "image", "generator": "Vidofy", "supports_ref": True, "api": "poyo_ai"},
             {"id": "gpt_image_2", "name": "GPT Image 2", "type": "image", "generator": "VisualGPT", "supports_ref": True},
             {"id": "gpt_image_2_alt", "name": "GPT Image 2 Alt", "type": "image", "generator": "VisualGPT", "supports_ref": True},
             {"id": "fal_veo3", "name": "Veo 3.1", "type": "video", "generator": "Synthesia"},
