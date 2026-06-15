@@ -1209,6 +1209,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ============ ROOT ENDPOINT FOR RENDER HEALTH CHECK ============
+@app.get("/")
+async def root():
+    return {
+        "status": "running",
+        "message": "AI Media Generation API is live",
+        "version": "2.0.0",
+        "endpoints": [
+            "POST /generate",
+            "GET /status/{job_id}",
+            "GET /health",
+            "GET /models"
+        ]
+    }
+
 def process_ref_image(ref_image: str, model: str):
     if not ref_image:
         return None
